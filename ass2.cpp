@@ -20,8 +20,22 @@ public:
     int id, arrival_time, total_cpu_time, max_cpu_burst, max_io_burst,
         rem_cpu_time, run_queue_in_time, static_priority,
         prev_cb, prev_io, io_block_time, cpu_wait_time, finish_time,
-        dynamic_prio;
+        dynamic_prio, next_event_ts, prev_run_time, supposed_to_sub, pp, pp_time;
 };
+class Event {
+public:
+    int exec_time, old_state, new_state, event_no;
+    Process *process;
+};
+struct EventComparator {
+    bool operator()(const Event event1, const Event event2) {
+        if (event1.exec_time != event2.exec_time) {
+            return event1.exec_time > event2.exec_time;
+        }
+        return event1.event_no > event2.event_no;
+    }
+};
+priority_queue<Event, vector<Event>, EventComparator> eventQueue;
 
 //Scehdulers
 class baseScheduler
@@ -141,7 +155,47 @@ private:
     vector<queue<Process*>> expired_rq;
 };
 
-class PREPRIO : public baseScheduler{};
+class PREPRIO : public baseScheduler{
+
+    void add_process(Process *p){
+        int dp = p->dynamic_prio;
+        if(p->dynamic_prio>=0){
+            if(active_rq.size()<MAX_PRIO){
+                for(int i=0;i<MAX_PRIO;i++){active_rq.push_back(queue<Process*>());}
+            }
+            active_rq[dp].push(p);
+        }
+        else{
+            if(expired_rq.size()<MAX_PRIO){
+                for(int i=0;i<MAX_PRIO;i++){expired_rq.push_back(queue<Process*>());}
+            }
+            p->dynamic_prio = p->static_priority-1;
+            expired_rq[p->dynamic_prio].push(p);
+        }
+    };
+
+    Process* get_next_process(){
+        int i=MAX_PRIO-1;
+        while(i>=0 && active_rq[i].empty()){i--;}
+        if(i<0){
+            vector<queue<Process*>> temp_rq = expired_rq;
+            expired_rq = active_rq;
+            active_rq = temp_rq;
+        }
+
+        i=MAX_PRIO-1;
+        while(i>=0 && active_rq[i].empty()){i--;}
+        if(i<0) return nullptr;
+
+        Process *next = active_rq[i].front();
+        active_rq[i].pop();
+        return next;
+    };
+
+private:
+    vector<queue<Process*>> active_rq;
+    vector<queue<Process*>> expired_rq;
+};
 
 // Simulator
 enum STATE {CREATED, READY, RUNNING, BLOCKED, PREEMPT, FINISH};
@@ -159,7 +213,7 @@ char *sflag = NULL;
 vector<pair<int,int>> io_intervals;
 int evt_cntr = 0;
 baseScheduler *curr_sche;
-int quantum = 2;
+int quantum = 4;
 string s_name;
 
 void createRanVals(string file){
@@ -186,22 +240,7 @@ void createRanVals(string file){
 }
 
 //Event
-class Event {
-public:
-    int exec_time, old_state, new_state, event_no;
-    Process *process;
-};
 
-struct EventComparator {
-    bool operator()(const Event event1, const Event event2) {
-        if (event1.exec_time != event2.exec_time) {
-            return event1.exec_time > event2.exec_time;
-        }
-        return event1.event_no > event2.event_no;
-    }
-};
-
-priority_queue<Event, vector<Event>, EventComparator> eventQueue;
 
 int getBurst(int burst){
     int p = ofs;
@@ -237,6 +276,7 @@ Process* create_process(string str){
     pro->io_block_time = 0;
     pro->cpu_wait_time=0;
     pro->prev_cb=-1;
+    pro->pp=-1;
 
     return pro;
 }
@@ -273,6 +313,7 @@ void initialise(string file) {
             eve.process = pro;
             eve.old_state = CREATED;
             eve.new_state = READY;
+            eve.process->next_event_ts = pro->arrival_time;
             eve.event_no = evt_cntr; evt_cntr++;
 
             eventQueue.push(eve);
@@ -282,8 +323,8 @@ void initialise(string file) {
     }
 
     //initialise scheduler
-    curr_sche = new PRIO();
-    s_name = "PRIO";
+    curr_sche = new PREPRIO();
+    s_name = "PREPRIO";
 
 //    if(sflag=="L"){ curr_sche = new LCFS();}
 //    else if(sflag=="S"){ curr_sche = new SRTF();}
@@ -352,15 +393,24 @@ void computeStats(Process *p){
 //    eventQueue.push(*eve);
 //}
 
+//bool test_preempt(int p_dyn_prio, int p_next_event_ts, int curtime){
+//    Process *temp = CURRENT_RUNNING_PROCESS;
+//    if(CURRENT_RUNNING_PROCESS== nullptr) return false;
+//    if(CURRENT_RUNNING_PROCESS->dynamic_prio < p_dyn_prio){
+//        if(p_next_event_ts > curtime) return true;
+//    }
+//    return false;
+//};
+
 void Simulation() {
     Event *evt;
     int curr_time;
     bool CALL_SCHEDULER = false;
-    Process* CURRENT_RUNNING_PROCESS = nullptr;
+    Process *CURRENT_RUNNING_PROCESS = nullptr;
+
     Process *proc;
 
     //Testing
-//    stack<Process*> temp_rq = curr_sche->getStack();
     priority_queue<Event, vector<struct Event >, EventComparator> *temp_eq = &eventQueue;
 
     while (!eventQueue.empty()) {
@@ -380,6 +430,56 @@ void Simulation() {
                     printf("%u %u %u: %s -> %s\n",curr_time,pid,0,states[CREATED],states[READY]);
                 }else{
                     printf("%u %u %u: %s -> %s\n",curr_time,pid,evt->process->prev_io,states[BLOCKED],states[READY]);
+                }
+
+                bool should_preempt=false;
+                if(s_name=="PREPRIO"){
+                    if(CURRENT_RUNNING_PROCESS==nullptr){should_preempt=false;}
+                    else{
+                        if(CURRENT_RUNNING_PROCESS->dynamic_prio < proc->dynamic_prio &&
+                                CURRENT_RUNNING_PROCESS->next_event_ts > curr_time){
+                        should_preempt=true;
+                        }
+                    }
+                }
+
+                if(s_name=="PREPRIO" && should_preempt){
+                    printf("PRIO PREEMPTION \n");
+                    priority_queue<Event, vector<Event>, EventComparator> new_eq;
+                    Process* temp_p = new Process();
+                    temp_p->id = CURRENT_RUNNING_PROCESS->id;
+
+                    while(!eventQueue.empty()){
+                        Event e = eventQueue.top();
+                        eventQueue.pop();
+
+                        if(e.process->id != temp_p->id){
+                            new_eq.push(e);
+                        }else{
+                            int run_time = curr_time - CURRENT_RUNNING_PROCESS->prev_run_time;
+
+                            Event eve;
+                            eve.old_state = RUNNING;
+                            eve.new_state = PREEMPT;
+                            eve.process = CURRENT_RUNNING_PROCESS;
+                            eve.exec_time = curr_time;
+                            if(e.new_state==BLOCKED){
+                                eve.process->prev_cb = eve.process->prev_cb -run_time;
+                            }else{
+                                eve.process->prev_cb = eve.process->prev_cb + CURRENT_RUNNING_PROCESS->supposed_to_sub-run_time;
+                            }
+
+                            eve.process->rem_cpu_time = eve.process->rem_cpu_time + CURRENT_RUNNING_PROCESS->supposed_to_sub - run_time;
+                            eve.event_no = evt_cntr; evt_cntr++;
+                            eve.process->next_event_ts=curr_time;
+                            eve.process->pp=1;
+                            eve.process->pp_time=run_time;
+                            //eve.process->dynamic_prio = eve.process->dynamic_prio+1;
+                            new_eq.push(eve);
+                        }
+                    }
+                    eventQueue = new_eq;
+
                 }
 
                 proc->run_queue_in_time = curr_time;
@@ -429,19 +529,24 @@ void Simulation() {
                     eve.process = evt->process;
                     eve.old_state = RUNNING;
                     eve.new_state = PREEMPT;
-                    eve.exec_time = curr_time+quantum;
+                    eve.exec_time = curr_time + quantum;
                     eve.process->prev_cb = cb_time-quantum;
                     eve.event_no = evt_cntr; evt_cntr++;
+                    eve.process->next_event_ts = curr_time+quantum;
+                    eve.process->supposed_to_sub = quantum;
                     eventQueue.push(eve);
                 }
                 else{
                     if (cb_time==evt->process->rem_cpu_time){
+                        evt->process->rem_cpu_time = evt->process->rem_cpu_time - cb_time;
                         Event eve;
                         eve.process = evt->process;
                         eve.old_state = RUNNING;
                         eve.new_state = FINISH;
                         eve.exec_time = curr_time+cb_time;
                         eve.process->prev_cb = cb_time;
+                        eve.process->next_event_ts = curr_time+quantum;
+                        eve.process->supposed_to_sub = cb_time;
                         eventQueue.push(eve);
                     }else{
                         evt->process->rem_cpu_time = evt->process->rem_cpu_time - cb_time;
@@ -452,7 +557,10 @@ void Simulation() {
                         eve.exec_time = curr_time+cb_time;
                         eve.event_no = evt_cntr; evt_cntr++;
                         eve.process->prev_cb = cb_time;
+                        eve.process->next_event_ts = curr_time+quantum;
+                        eve.process->supposed_to_sub = cb_time;
                         eventQueue.push(eve);
+
                     }
                 }
 
@@ -490,9 +598,17 @@ void Simulation() {
             case PREEMPT:
             {
                 //int temp = curr_time -
-                printf("%u %u %u: %s -> %s  cb=%u rem=%u prio=%u\n",
-                       curr_time,pid,quantum,states[RUNNING],states[READY],
-                       evt->process->prev_cb,evt->process->rem_cpu_time,evt->process->dynamic_prio);
+                if(evt->process->pp==1){
+                    printf("%u %u %u: %s -> %s  cb=%u rem=%u prio=%u\n",
+                           curr_time,pid,evt->process->pp_time,states[RUNNING],states[READY],
+                           evt->process->prev_cb,evt->process->rem_cpu_time,evt->process->dynamic_prio);
+                    evt->process->pp=-1;
+                }else{
+                    printf("%u %u %u: %s -> %s  cb=%u rem=%u prio=%u\n",
+                           curr_time,pid,quantum,states[RUNNING],states[READY],
+                           evt->process->prev_cb,evt->process->rem_cpu_time,evt->process->dynamic_prio);
+                }
+
 
                 evt->process->run_queue_in_time = curr_time;
                 evt->process->dynamic_prio = evt->process->dynamic_prio-1;
@@ -528,6 +644,7 @@ void Simulation() {
                     eve.process = CURRENT_RUNNING_PROCESS;
                     eve.exec_time = curr_time;
                     eve.event_no = evt_cntr; evt_cntr++;
+                    eve.process->prev_run_time = curr_time;
                     eventQueue.push(eve);
 
                 }
@@ -627,8 +744,6 @@ void print_stats(){
 
 }
 
-//TODO:what if process doesn't start at 0. Will total time change?
-
 void run(){
     string rfile = "/Users/sakshamsingh/Desktop/lab2_assign/mycode/rfile";
     createRanVals(rfile);
@@ -637,7 +752,6 @@ void run(){
     Simulation();
     print_stats();
 }
-
 
 int main(int argc, char *argv[]){
     readArg(argc,argv);
