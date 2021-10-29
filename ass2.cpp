@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <utility>
 #include <list>
+#include <string.h>
 
 using namespace std;
 
@@ -201,6 +202,7 @@ private:
 enum STATE {CREATED, READY, RUNNING, BLOCKED, PREEMPT, FINISH};
 char* states [] = {"CREATED", "READY", "RUNNG", "BLOCK", "PREEMPT","FINISH"};
 
+queue<string> file_queue;
 vector<int> randvals;
 int ofs=0;
 int randSize;
@@ -213,8 +215,9 @@ char *sflag = NULL;
 vector<pair<int,int>> io_intervals;
 int evt_cntr = 0;
 baseScheduler *curr_sche;
-int quantum = 4;
+int quantum = 2;
 string s_name;
+string print_name;
 
 void createRanVals(string file){
     string line_;
@@ -281,17 +284,6 @@ Process* create_process(string str){
     return pro;
 }
 
-////Priority Queue printer
-//void showpq(priority_queue<Event , vector<struct Event >, EventComparator> gq)
-//{
-//    priority_queue<Event , vector<struct Event >, EventComparator> g = gq;
-//    while (!g.empty()) {
-//        printf("process : %u\n", g.top().process->arrival_time);
-//        g.pop();
-//    }
-//    cout << '\n';
-//}
-
 void initialise(string file) {
     int line_no=0;
     string line_;
@@ -322,15 +314,7 @@ void initialise(string file) {
         }
     }
 
-    //initialise scheduler
-    curr_sche = new PREPRIO();
-    s_name = "PREPRIO";
 
-//    if(sflag=="L"){ curr_sche = new LCFS();}
-//    else if(sflag=="S"){ curr_sche = new SRTF();}
-//    else if(sflag=="R"){ curr_sche = new RR();}
-//    else if(sflag=="P"){ curr_sche = new PRIO();}
-//    else if(sflag=="E"){ curr_sche = new PREPRIO();}
 };
 
 Event* get_event(){
@@ -427,9 +411,14 @@ void Simulation() {
                 //TODO: Consider premption case
                 //CREATED->READY
                 if(evt->old_state==CREATED){
-                    printf("%u %u %u: %s -> %s\n",curr_time,pid,0,states[CREATED],states[READY]);
+                    if(vflag==1){
+                        printf("%u %u %u: %s -> %s\n",curr_time,pid,0,states[CREATED],states[READY]);
+                    }
+
                 }else{
-                    printf("%u %u %u: %s -> %s\n",curr_time,pid,evt->process->prev_io,states[BLOCKED],states[READY]);
+                    if(vflag==1){
+                        printf("%u %u %u: %s -> %s\n",curr_time,pid,evt->process->prev_io,states[BLOCKED],states[READY]);
+                    }
                 }
 
                 bool should_preempt=false;
@@ -444,7 +433,7 @@ void Simulation() {
                 }
 
                 if(s_name=="PREPRIO" && should_preempt){
-                    printf("PRIO PREEMPTION \n");
+                    if(vflag==1){printf("PRIO PREEMPTION \n");}
                     priority_queue<Event, vector<Event>, EventComparator> new_eq;
                     Process* temp_p = new Process();
                     temp_p->id = CURRENT_RUNNING_PROCESS->id;
@@ -463,8 +452,8 @@ void Simulation() {
                             eve.new_state = PREEMPT;
                             eve.process = CURRENT_RUNNING_PROCESS;
                             eve.exec_time = curr_time;
-                            if(e.new_state==BLOCKED){
-                                eve.process->prev_cb = eve.process->prev_cb -run_time;
+                            if(e.new_state==BLOCKED||e.new_state==FINISH){
+                                eve.process->prev_cb = eve.process->prev_cb-run_time;
                             }else{
                                 eve.process->prev_cb = eve.process->prev_cb + CURRENT_RUNNING_PROCESS->supposed_to_sub-run_time;
                             }
@@ -501,25 +490,11 @@ void Simulation() {
 
                 int temp = curr_time - evt->process->run_queue_in_time;
 
-//                Process temp_p = *proc;
-//                int temp_prio = evt->process->static_priority-1;
-//                if(s_name=="PRIO"){
-//                    printf("%u %u %u: %s -> %s cb=%u rem=%u prio=%u\n",
-//                           curr_time,temp_p.id,curr_time-temp_p.run_queue_in_time,states[READY],states[RUNNING],
-//                           cb_time,temp_p.rem_cpu_time,temp_p.dynamic_prio);
-//                }else{
-//                    printf("%u %u %u: %s -> %s cb=%u rem=%u prio=%u\n",
-//                           curr_time,pid,temp,states[READY],states[RUNNING],
-//                           cb_time,proc->rem_cpu_time,proc->static_priority-1);
-//                }
-
-//                printf("%u %u %u: %s -> %s cb=%u rem=%u prio=%u\n",
-//                       curr_time,pid,temp,states[READY],states[RUNNING],
-//                       cb_time,evt->process->rem_cpu_time,evt->process->static_priority-1);
-
-                printf("%u %u %u: %s -> %s cb=%u rem=%u prio=%u\n",
-                       curr_time,pid,temp,states[READY],states[RUNNING],
-                       cb_time,evt->process->rem_cpu_time,evt->process->dynamic_prio);
+                if(vflag==1){
+                    printf("%u %u %u: %s -> %s cb=%u rem=%u prio=%u\n",
+                           curr_time,pid,temp,states[READY],states[RUNNING],
+                           cb_time,evt->process->rem_cpu_time,evt->process->dynamic_prio);
+                }
 
                 evt->process->cpu_wait_time = evt->process->cpu_wait_time + temp;
 
@@ -557,7 +532,7 @@ void Simulation() {
                         eve.exec_time = curr_time+cb_time;
                         eve.event_no = evt_cntr; evt_cntr++;
                         eve.process->prev_cb = cb_time;
-                        eve.process->next_event_ts = curr_time+quantum;
+                        eve.process->next_event_ts = curr_time+cb_time;
                         eve.process->supposed_to_sub = cb_time;
                         eventQueue.push(eve);
 
@@ -589,9 +564,11 @@ void Simulation() {
 
                 CALL_SCHEDULER = true;
 
-                printf("%u %u %u: %s -> %s ib=%u rem=%u\n",
-                       curr_time,pid,temp_cb,states[RUNNING],states[BLOCKED],
-                       eve.process->prev_io,eve.process->rem_cpu_time);
+                if(vflag==1){
+                    printf("%u %u %u: %s -> %s ib=%u rem=%u\n",
+                           curr_time,pid,temp_cb,states[RUNNING],states[BLOCKED],
+                           eve.process->prev_io,eve.process->rem_cpu_time);
+                }
 
                 break;
             }
@@ -599,14 +576,18 @@ void Simulation() {
             {
                 //int temp = curr_time -
                 if(evt->process->pp==1){
+                    if(vflag==1){
                     printf("%u %u %u: %s -> %s  cb=%u rem=%u prio=%u\n",
                            curr_time,pid,evt->process->pp_time,states[RUNNING],states[READY],
                            evt->process->prev_cb,evt->process->rem_cpu_time,evt->process->dynamic_prio);
+                    }
                     evt->process->pp=-1;
                 }else{
-                    printf("%u %u %u: %s -> %s  cb=%u rem=%u prio=%u\n",
-                           curr_time,pid,quantum,states[RUNNING],states[READY],
-                           evt->process->prev_cb,evt->process->rem_cpu_time,evt->process->dynamic_prio);
+                    if(vflag==1){
+                        printf("%u %u %u: %s -> %s  cb=%u rem=%u prio=%u\n",
+                               curr_time,pid,quantum,states[RUNNING],states[READY],
+                               evt->process->prev_cb,evt->process->rem_cpu_time,evt->process->dynamic_prio);
+                    }
                 }
 
 
@@ -622,7 +603,9 @@ void Simulation() {
             {
                 CURRENT_RUNNING_PROCESS = nullptr;
                 CALL_SCHEDULER = true;
-                printf("%u %u %u: Done\n",curr_time,evt->process->id,evt->process->prev_cb);
+                if(vflag==1){
+                    printf("%u %u %u: Done\n",curr_time,evt->process->id,evt->process->prev_cb);
+                }
                 evt->process->finish_time = curr_time;
                 computeStats(evt->process);
                 break;
@@ -653,7 +636,6 @@ void Simulation() {
     }
 }
 
-//TODO: remove the printf in readArg to avoid error in cout
 int readArg(int argc, char *argv[]){
     int index;
     int c;
@@ -678,28 +660,127 @@ int readArg(int argc, char *argv[]){
                 sflag = optarg;
                 break;
             case '?':
-                if (optopt == 'c')
-                    fprintf (stderr, "Option -%c requires an argument.\n", optopt);
-                else if (isprint (optopt))
-                    fprintf (stderr, "Unknown option `-%c'.\n", optopt);
-                else
-                    fprintf (stderr,
-                             "Unknown option character `\\x%x'.\n",
-                             optopt);
-                return 1;
+                break;
             default:
-                abort ();
+                break;
         }
 
-//    for (auto itr = scheduler_map.find(sflag); itr != scheduler_map.end(); itr++) {
-//        sche_flag = itr->second;
-//    }
+    if(sflag[0]=='F'){
+        curr_sche = new FIFO();
+        quantum=10000;
+        print_name = "FCFS";
+    }
+    else if(sflag[0]=='L'){
+        curr_sche = new LCFS();
+        quantum=10000;
+        print_name = "LCFS";
+    }
+    else if(sflag[0]=='S'){
+        curr_sche = new SRTF();
+        quantum=10000;
+        print_name = "SRTF";
+    }
+    else if(sflag[0]=='R'){
+        curr_sche = new RR();
+        string temp;
+        for (int i=1;i<strlen(sflag); i++) {
+            temp += sflag[i];
+        }
+        quantum = std::stoi(temp);
 
-    printf ("vflag = %d, tflag = %d, evalue = %d, pvalue = %d, schedul = %s\n",
-            vflag, tflag, eflag, pflag, sflag);
+        print_name = "RR "+temp;
+    }
+    else if(sflag[0]=='P'){
+        curr_sche = new PRIO();
+
+        std::stringstream test(sflag);
+        std::string segment;
+        std::vector<std::string> seglist;
+        while(std::getline(test, segment, ':'))
+        {
+            seglist.push_back(segment);
+        }
+
+        string temp;
+        for (int i=1;i<strlen(seglist[0].c_str()); i++) {
+            temp += seglist[0][i];
+        }
+        quantum = std::stoi(temp);
+
+        if(seglist.size()>1){MAX_PRIO = std::stoi(seglist[1]);}
+        print_name = "PRIO "+temp;
+
+    }
+    else if(sflag[0]=='E'){
+        curr_sche = new PREPRIO();
+
+        std::stringstream test(sflag);
+        std::string segment;
+        std::vector<std::string> seglist;
+        while(std::getline(test, segment, ':'))
+        {
+            seglist.push_back(segment);
+        }
+
+        string temp;
+        for (int i=1;i<strlen(seglist[0].c_str()); i++) {
+            temp += seglist[0][i];
+        }
+        quantum = std::stoi(temp);
+
+        if(seglist.size()>1){MAX_PRIO = std::stoi(seglist[1]);}
+
+        print_name = "PREPRIO "+temp;
+        s_name = "PREPRIO";
+    }
 
     for (index = optind; index < argc; index++)
-        printf ("Non-option argument %s\n", argv[index]);
+        file_queue.push(argv[index]);
+
+    return -1;
+}
+
+int readArgTest(int argc, char *argv[]){
+    int index;
+    int c;
+    opterr = 0;
+    vflag = 1;
+
+    curr_sche = new PREPRIO();
+    quantum = 2;
+    MAX_PRIO = 5;
+    s_name = "PREPRIO";
+    string rfile = "/Users/sakshamsingh/Desktop/lab2_assign/mycode/rfile";
+    string infile = "/Users/sakshamsingh/Desktop/lab2_assign/mycode/input2";
+    file_queue.push(infile);
+    file_queue.push(rfile);
+
+//     if(sflag[0]=='E'){
+//        curr_sche = new PREPRIO();
+//
+//        std::stringstream test(sflag);
+//        std::string segment;
+//        std::vector<std::string> seglist;
+//        while(std::getline(test, segment, ':'))
+//        {
+//            seglist.push_back(segment);
+//        }
+//
+//        string temp;
+//        for (int i=1;i<strlen(seglist[0].c_str()); i++) {
+//            temp += seglist[0][i];
+//        }
+//        quantum = std::stoi(temp);
+//
+//        if(seglist.size()>1){MAX_PRIO = std::stoi(seglist[1]);}
+//
+//        print_name = "PREPRIO "+temp;
+//        s_name = "PREPRIO";
+//    }
+//
+//    for (index = optind; index < argc; index++)
+//        file_queue.push(argv[index]);
+
     return -1;
 }
 
@@ -725,6 +806,7 @@ void print_stats(){
     int num_proc = 0;
     int sum_ta_time=0;
     int sum_cw_time=0;
+    cout<<print_name<<endl;
     for (auto i : process_stats)
     {
         printf("%04d: %4d %4d %4d %4d %1d | %5d %5d %5d %5d\n",i.first,
@@ -736,25 +818,27 @@ void print_stats(){
         sum_ta_time+=i.second["turn_around_time"];
         sum_cw_time+=i.second["cpu_wait_time"];
     }
-    //compute summary stats
 
     printf("SUM: %d %.2lf %.2lf %.2lf %.2lf %.3lf\n",
-           last_event_ft,((double)cpu_util*100)/last_event_ft,((double)io_util_time*100)/last_event_ft,
-           (double)sum_ta_time/num_proc,(double)sum_cw_time/num_proc,(double)num_proc*100/last_event_ft);
+           last_event_ft,100.0*(cpu_util/(double)last_event_ft),100.0*(io_util_time/(double)last_event_ft),
+           sum_ta_time/(double)num_proc,sum_cw_time/(double)num_proc,100.0*(num_proc/(double)last_event_ft));
 
 }
 
 void run(){
-    string rfile = "/Users/sakshamsingh/Desktop/lab2_assign/mycode/rfile";
+
+    string input_file = file_queue.front(); file_queue.pop();
+    string rfile = file_queue.front();
+
     createRanVals(rfile);
-    string file = "/Users/sakshamsingh/Desktop/lab2_assign/mycode/input3";
-    initialise(file);
+    initialise(input_file);
     Simulation();
     print_stats();
 }
 
 int main(int argc, char *argv[]){
     readArg(argc,argv);
+//    readArgTest(argc,argv);
     run();
     return 0;
 }
