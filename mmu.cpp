@@ -40,13 +40,37 @@ struct pte_t {
 };
 
 //Global stats
-
 unsigned long ctx_switches = 0;
 unsigned long process_exits = 0;
 unsigned long long cost = 0;
 unsigned long long inst_count = 0;
 
+int inst_no = -1;
+
 void print_h(string s){cout<<" "<<s<<endl;}
+vector<int> randvals;
+
+void read_r_file(string file){
+    string line_;
+    ifstream file_(file);
+    int count = 0;
+    int temp, randSize;
+    char *p;
+
+    if(file_.is_open()) {
+        while (getline(file_, line_)) {
+            if(count==0){
+                randSize = strtol(line_.c_str(), &p, 10);
+            }
+            else{
+                temp = strtol(line_.c_str(), &p, 10);
+                randvals.push_back(temp);
+            }
+            count++;
+        }
+    }
+    file_.close();
+}
 
 struct vma {int start_vp, end_vp, write_p, file_map;};
 
@@ -65,6 +89,8 @@ struct Process {
 
 struct frame_t {
     int pid, vpage;
+    unsigned long long age;
+    int ltu;
 };
 
 vector<Process*> proc_pool;
@@ -91,18 +117,170 @@ class CLOCK : public Pager{
 public:
     int head = 0;
     int select_victim_frame() override{
-        
+
         while(proc_pool[frame_table[head].pid]->page_table[frame_table[head].vpage].referenced){
             proc_pool[frame_table[head].pid]->page_table[frame_table[head].vpage].referenced=0;
             head = (head+1)%MAX_FRAMES;
         }
+
         int temp = head;
         head = (head+1)%MAX_FRAMES;
         return temp;
     }
 };
 
+class NRU : public Pager{
+public:
+    int head = 0;
+    int prev_reset_time = 0;
+    bool should_reset = false;
 
+    int select_victim_frame() override{
+
+        int nru_frame_no;
+
+        if(inst_no-prev_reset_time+1>=50){
+            //printf("RESETTING AT %u\n",inst_no);
+            should_reset=true;
+            prev_reset_time = inst_no+1;
+        }else{
+            should_reset=false;
+        }
+
+        int nru_class[4];
+        for(int i=0;i<4;i++){
+            nru_class[i]=-1;
+        }
+
+        int curr_pid, curr_vp, curr_ref, curr_mod, class_val;
+        frame_t ft_it;
+        int temp=head;
+        for(int i=0;i<MAX_FRAMES;i++){
+
+            ft_it = frame_table[temp];
+            curr_pid = ft_it.pid;
+            curr_vp = ft_it.vpage;
+            curr_ref = proc_pool[curr_pid]->page_table[curr_vp].referenced;
+            curr_mod = proc_pool[curr_pid]->page_table[curr_vp].modified;
+            class_val = 2*curr_ref + curr_mod;
+
+            if(class_val==0 && (!should_reset)){
+                nru_frame_no = temp;
+                head = (nru_frame_no+1)%MAX_FRAMES;
+                return nru_frame_no;
+            }
+
+            if(nru_class[class_val]==-1){
+                nru_class[class_val] = temp;
+            }
+
+            if (should_reset){
+                proc_pool[curr_pid]->page_table[curr_vp].referenced=0;
+            }
+
+            temp = (temp+1)%MAX_FRAMES;
+        }
+
+        for(int i=0;i<4;i++){
+            if(nru_class[i]!=-1){
+                nru_frame_no = nru_class[i];
+                break;
+            }
+        }
+
+        head = (nru_frame_no+1)%MAX_FRAMES;
+        return nru_frame_no;
+    }
+};
+
+class RANDOM : public Pager{
+public:
+    int head = 0;
+    int select_victim_frame() override{
+        int temp = head;
+        head = (head+1)%randvals.size();
+        return randvals[temp] % MAX_FRAMES;
+    }
+};
+
+class AGING : public Pager{
+public:
+    int head = 0;
+    int select_victim_frame() override{
+
+        frame_t (*temp_ft)[MAX_FRAMES] = &frame_table;
+        int temp_inst = inst_no;
+        if(temp_inst==1988){
+            int x = 5;
+        }
+
+        int min_age_frame_no = -1;
+        unsigned long long min_val = -1;
+        int temp = head,curr_pid,curr_vp,curr_ref;
+        frame_t ft_it;
+        for(int i=0; i<MAX_FRAMES; i++){
+            ft_it = frame_table[temp];
+            curr_pid = ft_it.pid;
+            curr_vp = ft_it.vpage;
+            curr_ref = proc_pool[curr_pid]->page_table[curr_vp].referenced;
+
+            frame_table[temp].age = frame_table[temp].age>> 1;
+            if(curr_ref){
+                frame_table[temp].age = (frame_table[temp].age | 0x80000000);
+                proc_pool[curr_pid]->page_table[curr_vp].referenced=0;
+            }
+
+            if(min_age_frame_no ==-1 || frame_table[temp].age < min_val){
+                min_age_frame_no = temp;
+                min_val = frame_table[temp].age;
+            }
+
+            temp = (temp+1)%MAX_FRAMES;
+        }
+        //frame_table[min_age_frame_no].age = 0;
+        head = (min_age_frame_no+1)%MAX_FRAMES;
+        return min_age_frame_no;
+    }
+};
+
+class WSET : public Pager{
+public:
+    int head = 0;
+
+    int select_victim_frame() override{
+        int temp = head;
+        int curr_pid, curr_vp, curr_ref, curr_ltu;
+        int oldest_ltu=-1, oldest_frame_no=-1;
+        frame_t ft_it;
+
+        for(int i=0;i<MAX_FRAMES;i++){
+            ft_it = frame_table[temp];
+            curr_pid = ft_it.pid;
+            curr_vp = ft_it.vpage;
+            curr_ltu = ft_it.ltu;
+            curr_ref = proc_pool[curr_pid]->page_table[curr_vp].referenced;
+
+            if(curr_ref){
+                frame_table[temp].ltu = inst_no;
+                proc_pool[curr_pid]->page_table[curr_vp].referenced=0;
+                curr_ltu = inst_no;
+            }else if(inst_no-curr_ltu > 49){
+                head = (temp+1)%MAX_FRAMES;
+                return temp;
+            }
+
+            if(oldest_frame_no==-1 || (oldest_ltu > curr_ltu)){
+                oldest_frame_no = temp;
+                oldest_ltu = curr_ltu;
+            }
+
+            temp = (temp+1)%MAX_FRAMES;
+        }
+
+        head = (oldest_frame_no+1)%MAX_FRAMES;
+        return oldest_frame_no;
+    }
+};
 
 Pager *curr_pager;
 
@@ -111,10 +289,10 @@ void initialise(){
         free_frames.push_back(i);
 
         frame_t temp_ft;
-        temp_ft.vpage = -1; temp_ft.pid = -1;
+        temp_ft.vpage = -1; temp_ft.pid = -1; temp_ft.age=0;
         frame_table[i] = temp_ft;
     }
-    curr_pager = new CLOCK();
+    curr_pager = new WSET();
     inst_count = Q_ins.size();
 }
 
@@ -220,12 +398,28 @@ void tester(){
     cout<<" "<<endl;
 }
 
+void print_FT(){
+    string ft_str = "FT:";
+    for(frame_t ft_it : frame_table){
+        if (ft_it.pid<0){
+            ft_str += " *";
+        }
+        else{
+            ft_str += " "+to_string(ft_it.pid)+":"+to_string(ft_it.vpage);
+        }
+    }
+    cout<<ft_str<<endl;
+}
+
+
 void scheduler(){
     frame_t (*temp_ft)[MAX_FRAMES] = &frame_table;
+    int temp_inst_no = 0;
+
     Process *curr_proc = nullptr;
-    int inst_no = -1;
     while (!Q_ins.empty()) {
         inst_no++;
+        temp_inst_no = inst_no;
         Inst curr_inst = Q_ins.front(); Q_ins.pop();
 
         //intialise if not yet
@@ -337,6 +531,8 @@ void scheduler(){
 
                 curr_frame->pid = curr_proc->pid;
                 curr_frame->vpage = curr_inst.vpage;
+                curr_frame->age = 0;
+                curr_frame->ltu = inst_no;
 
                 curr_pte->present=1;
                 curr_pte->page_frame_no = curr_frame_no;
@@ -403,6 +599,8 @@ void scheduler(){
 
                     curr_frame->pid = curr_proc->pid;
                     curr_frame->vpage = curr_inst.vpage;
+                    curr_frame->age = 0;
+                    curr_frame->ltu = inst_no;
 
                     curr_pte->present=1;
                     curr_pte->page_frame_no = curr_frame_no;
@@ -420,6 +618,7 @@ void scheduler(){
                 break;
             }
         }
+        //print_FT();
     }
 
 }
@@ -503,7 +702,9 @@ int main(int argc, char *argv[]) {
     //readArg(argc,argv);
     readArgTest(argc,argv);
     string in_file = "/Users/sakshamsingh/Desktop/lab3/mmu/in11";
+    string r_file = "/Users/sakshamsingh/Desktop/lab3/mmu/rfile";
     read_in_file(in_file);
+    read_r_file(r_file);
     initialise();
     scheduler();
     print_results();
