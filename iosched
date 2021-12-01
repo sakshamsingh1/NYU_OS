@@ -1,0 +1,240 @@
+#include <iostream>
+#include <string>
+#include <fstream>
+#include <map>
+#include <vector>
+#include <queue>
+
+using namespace std;
+
+struct IO_info {
+    int io_no;
+    int at;
+    int ser_st;
+    int ser_et;
+    int track_no;
+};
+
+string in_file;
+vector<IO_info*> io_pool;
+int TIMER = 1;
+int CURR_TRACK = 0;
+int CURR_DIR = 1;
+int io_next = 0;
+int io_curr = -1;
+int total_mov = 0;
+
+//TODO: To initialise CURR_TRACK=0 and CURR_DIR=1 for the case of LOOK
+
+class Algo{
+public:
+    virtual void add_req(int io_no) = 0;
+    virtual int get_next_req() = 0;
+    virtual bool is_req_pending() = 0;
+};
+
+class FIFO : public Algo{
+public:
+    void add_req(int io_no) override {
+        IOQueue.push(io_no);
+    }
+
+    int get_next_req() override {
+        int temp = IOQueue.front(); IOQueue.pop();
+        return temp;
+    }
+
+    bool is_req_pending() override {
+        return !IOQueue.empty();
+    }
+
+private:
+    queue<int> IOQueue;
+};
+
+class SSTF : public Algo{
+public:
+    void add_req(int io_no) override {
+        IOVec.push_back(io_no);
+    }
+
+    int get_next_req() override {
+        int min_dist = 0, min_io = -1, min_idx=0;
+        for(int i=0;i<IOVec.size();i++){
+            int it_io_no = IOVec[i];
+            if(min_io==-1 || min_dist > abs(io_pool[it_io_no]->track_no - CURR_TRACK)){
+                min_io = it_io_no;
+                min_dist = abs(io_pool[min_io]->track_no - CURR_TRACK);
+                min_idx = i;
+            }
+        }
+        IOVec.erase(IOVec.begin()+min_idx);
+        return min_io;
+    }
+
+    bool is_req_pending() override {
+        return !IOVec.empty();
+    }
+
+private:
+    vector<int> IOVec;
+};
+
+class LOOK : public Algo{
+public:
+    void add_req(int io_no) override {
+        IOVec.push_back(io_no);
+    }
+
+    int get_next_req() override {
+        int min_dist = 0, next_io = -1, next_idx=0;
+        if(CURR_DIR==1){
+            for(int i=0; i<IOVec.size(); i++){
+                int it_io_no = IOVec[i];
+                if(io_pool[it_io_no]->track_no >= CURR_TRACK){
+                    if(next_io==-1 || min_dist > io_pool[it_io_no]->track_no - CURR_TRACK){
+                        next_io = it_io_no;
+                        min_dist = io_pool[it_io_no]->track_no - CURR_TRACK;
+                        next_idx = i;
+                    }
+                }
+            }
+        }
+        else if(CURR_DIR==-1){
+            for(int i=0; i<IOVec.size(); i++){
+                int it_io_no = IOVec[i];
+                if(io_pool[it_io_no]->track_no <= CURR_TRACK){
+                    if(next_io==-1 || min_dist > CURR_TRACK - io_pool[it_io_no]->track_no){
+                        next_io = it_io_no;
+                        min_dist = CURR_TRACK - io_pool[it_io_no]->track_no;
+                        next_idx = i;
+                    }
+                }
+            }
+        }
+
+        if(next_io==-1){
+            CURR_DIR *= -1;
+            return this->get_next_req();
+        }
+
+        IOVec.erase(IOVec.begin()+next_idx);
+        return next_io;
+    }
+
+    bool is_req_pending() override {
+        return !IOVec.empty();
+    }
+
+private:
+    vector<int> IOVec;
+};
+
+class CLOOK : public Algo{};
+
+class FLOOK : public Algo{};
+
+Algo *curr_algo;
+
+void read_in_file(){
+    string line_;
+    char *p;
+    int line_no = 0;
+    IO_info *curr_io;
+
+    ifstream file_(in_file);
+    if(file_.is_open()){
+        while(getline(file_,line_)){
+            if(line_[0]=='#') continue;
+
+            int time_step, track;
+            sscanf(line_.c_str(),"%d %d",&time_step, &track);
+
+            curr_io = new IO_info();
+            curr_io->io_no = line_no;
+            curr_io->at = time_step;
+            curr_io->track_no = track;
+
+            io_pool.push_back(curr_io);
+            line_no++;
+        }
+    }
+}
+
+void schedule(){
+    int *ttimer = &TIMER;
+    int *t_io_curr = &io_curr;
+    int *t_track = &CURR_TRACK;
+    int *t_io_next = &io_next;
+
+
+    while(true){
+        // new I/O arrived
+        if(io_next<io_pool.size() && io_pool[io_next]->at==TIMER){
+            curr_algo->add_req(io_next++);
+        }
+
+        // IO active and completed at TIMER
+        if(io_curr>=0 && io_pool[io_curr]->track_no==CURR_TRACK){
+            io_pool[io_curr]->ser_et = TIMER;
+            io_curr = -1;
+        }
+
+        //no request is active
+        if(io_curr==-1){
+            if(curr_algo->is_req_pending()){
+                io_curr = curr_algo->get_next_req();
+                io_pool[io_curr]->ser_st = TIMER;
+                if(io_pool[io_curr]->track_no==CURR_TRACK) continue;
+                CURR_DIR = io_pool[io_curr]->track_no>CURR_TRACK ? 1 : -1;
+            }
+            else if(io_next>=io_pool.size()){break;}
+        }
+        if(io_curr!=-1){
+            CURR_TRACK += CURR_DIR;
+            total_mov++;
+        }
+        TIMER++;
+    }
+}
+
+void initialise(){
+    read_in_file();
+    schedule();
+};
+
+void readArgTest(int argc, char *argv[]){
+    in_file = "/Users/sakshamsingh/Desktop/lab4/iosched/input9";
+    curr_algo = new SSTF();
+};
+
+void print_results(){
+    int total_time = 0;
+    int total_turnaround = 0;
+    int total_wait_time = 0;
+    int max_waittime = 0;
+
+    for(IO_info *io_it : io_pool){
+        printf("%5d: %5d %5d %5d\n",io_it->io_no, io_it->at,
+               io_it->ser_st, io_it->ser_et);
+        total_time = max(total_time,io_it->ser_et);
+        total_turnaround += io_it->ser_et - io_it->at;
+        total_wait_time += io_it->ser_st - io_it->at;
+        max_waittime = max(max_waittime, io_it->ser_st - io_it->at);
+    }
+
+    double avg_turn = total_turnaround==0 ? 0 : total_turnaround/(double)io_pool.size();
+    double avg_wait = total_wait_time==0 ? 0 : total_wait_time/(double)io_pool.size();
+
+
+    printf("SUM: %d %d %.2lf %.2lf %d\n",
+           total_time, total_mov, avg_turn, avg_wait, max_waittime);
+
+}
+
+int main(int argc, char *argv[]) {
+    readArgTest(argc,argv);
+    initialise();
+    print_results();
+    return 0;
+}
