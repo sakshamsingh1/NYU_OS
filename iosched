@@ -130,9 +130,106 @@ private:
     vector<int> IOVec;
 };
 
-class CLOOK : public Algo{};
+class CLOOK : public Algo{
+    void add_req(int io_no) override {
+        IOVec.push_back(io_no);
+    }
 
-class FLOOK : public Algo{};
+    int get_next_req() override {
+        int min_dist = 0, next_io = -1, next_idx=0;
+
+        for(int i=0; i<IOVec.size(); i++){
+            int it_io_no = IOVec[i];
+            if(io_pool[it_io_no]->track_no >= CURR_TRACK){
+                if(next_io==-1 || min_dist > io_pool[it_io_no]->track_no - CURR_TRACK){
+                    next_io = it_io_no;
+                    min_dist = io_pool[it_io_no]->track_no - CURR_TRACK;
+                    next_idx = i;
+                }
+            }
+        }
+
+        if(next_io==-1){
+            for(int i=0; i<IOVec.size(); i++){
+                int it_io_no = IOVec[i];
+                if(next_io==-1 || min_dist > io_pool[it_io_no]->track_no){
+                    next_io = it_io_no;
+                    min_dist = io_pool[it_io_no]->track_no;
+                    next_idx = i;
+                }
+            }
+        }
+
+        IOVec.erase(IOVec.begin()+next_idx);
+        return next_io;
+    }
+
+    bool is_req_pending() override {
+        return !IOVec.empty();
+    }
+
+private:
+    vector<int> IOVec;
+};
+
+class FLOOK : public Algo{
+    void add_req(int io_no) override {
+        Addp->push_back(io_no);
+    }
+
+    int get_next_req() override {
+
+        if(Activep->empty()){
+            vector<int> *temp_p = Activep;
+            Activep = Addp;
+            Addp = temp_p;
+        }
+
+        int min_dist = 0, next_io = -1, next_idx=0;
+        if(CURR_DIR==1){
+            for(int i=0; i<Activep->size(); i++){
+                int it_io_no = Activep->at(i);
+                if(io_pool[it_io_no]->track_no >= CURR_TRACK){
+                    if(next_io==-1 || min_dist > io_pool[it_io_no]->track_no - CURR_TRACK){
+                        next_io = it_io_no;
+                        min_dist = io_pool[it_io_no]->track_no - CURR_TRACK;
+                        next_idx = i;
+                    }
+                }
+            }
+        }
+        else if(CURR_DIR==-1){
+            for(int i=0; i<Activep->size(); i++){
+                int it_io_no = Activep->at(i);
+                if(io_pool[it_io_no]->track_no <= CURR_TRACK){
+                    if(next_io==-1 || min_dist > CURR_TRACK - io_pool[it_io_no]->track_no){
+                        next_io = it_io_no;
+                        min_dist = CURR_TRACK - io_pool[it_io_no]->track_no;
+                        next_idx = i;
+                    }
+                }
+            }
+        }
+
+        if(next_io==-1){
+            CURR_DIR *= -1;
+            return this->get_next_req();
+        }
+
+        Activep->erase(Activep->begin()+next_idx);
+        return next_io;
+    }
+
+    bool is_req_pending() override {
+        return !Activep->empty() || !Addp->empty();
+    }
+
+private:
+    vector<int> Q0;
+    vector<int> Q1;
+    vector<int> *Activep = &Q0;
+    vector<int> *Addp = &Q1;
+};
 
 Algo *curr_algo;
 
@@ -166,7 +263,7 @@ void schedule(){
     int *t_io_curr = &io_curr;
     int *t_track = &CURR_TRACK;
     int *t_io_next = &io_next;
-
+    vector<IO_info*> *t_ip = &io_pool;
 
     while(true){
         // new I/O arrived
@@ -205,7 +302,7 @@ void initialise(){
 
 void readArgTest(int argc, char *argv[]){
     in_file = "/Users/sakshamsingh/Desktop/lab4/iosched/input9";
-    curr_algo = new SSTF();
+    curr_algo = new FLOOK();
 };
 
 void print_results(){
@@ -225,7 +322,6 @@ void print_results(){
 
     double avg_turn = total_turnaround==0 ? 0 : total_turnaround/(double)io_pool.size();
     double avg_wait = total_wait_time==0 ? 0 : total_wait_time/(double)io_pool.size();
-
 
     printf("SUM: %d %d %.2lf %.2lf %d\n",
            total_time, total_mov, avg_turn, avg_wait, max_waittime);
