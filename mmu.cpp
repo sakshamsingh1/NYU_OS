@@ -3,15 +3,20 @@
 #include <fstream>
 #include <map>
 #include <string>
+#include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 using namespace std;
 
 //constants and variables
-const int MAX_FRAMES=16; //provided as input
+int MAX_FRAMES=16; //provided as input
 const int MAX_VPAGES=64;
 int num_proc = 0;
 enum INST {R,W,C,E};
 char* inst_print[] = {"r","w","c","e"};
+queue<string> file_queue;
 
 //print helper
 string SEGV = "SEGV";
@@ -44,6 +49,10 @@ unsigned long ctx_switches = 0;
 unsigned long process_exits = 0;
 unsigned long long cost = 0;
 unsigned long long inst_count = 0;
+int Oflag = 0;
+int Pflag = 0;
+int Fflag = 0;
+int Sflag = 0;
 
 int inst_no = -1;
 
@@ -95,7 +104,7 @@ struct frame_t {
 
 vector<Process*> proc_pool;
 deque<int> free_frames;
-frame_t frame_table[MAX_FRAMES];
+vector<frame_t> frame_table;
 queue<Inst> Q_ins;
 
 class Pager{
@@ -208,11 +217,11 @@ public:
     int head = 0;
     int select_victim_frame() override{
 
-        frame_t (*temp_ft)[MAX_FRAMES] = &frame_table;
-        int temp_inst = inst_no;
-        if(temp_inst==1988){
-            int x = 5;
-        }
+//        frame_t (*temp_ft)[MAX_FRAMES] = &frame_table;
+//        int temp_inst = inst_no;
+//        if(temp_inst==1988){
+//            int x = 5;
+//        }
 
         int min_age_frame_no = -1;
         unsigned long long min_val = -1;
@@ -284,39 +293,6 @@ public:
 
 Pager *curr_pager;
 
-void initialise(){
-    for(int i=0;i<MAX_FRAMES;i++){
-        free_frames.push_back(i);
-
-        frame_t temp_ft;
-        temp_ft.vpage = -1; temp_ft.pid = -1; temp_ft.age=0;
-        frame_table[i] = temp_ft;
-    }
-    curr_pager = new WSET();
-    inst_count = Q_ins.size();
-}
-
-int allocate_frame_from_free_list(){
-    if(free_frames.empty()) return -1;
-    int temp_front = free_frames.front(); free_frames.pop_front();
-    return temp_front;
-}
-
-int get_frame_no(){
-    int frame_no = allocate_frame_from_free_list();
-    if (frame_no == -1) frame_no = curr_pager->select_victim_frame();
-    return frame_no;
-}
-
-//TODO: zero processes
-
-void readArgTest(int argc, char *argv[]){
-
-    //readInpFile();
-};
-
-void readArg(int argc, char *argv[]){}
-
 void read_in_file(string in_file){
 //    queue<Inst> *temp_Q_in = &Q_ins;
     string line_;
@@ -386,6 +362,99 @@ void read_in_file(string in_file){
     }
 }
 
+void initialise(){
+    string in_file = file_queue.front(); file_queue.pop();
+    string r_file = file_queue.front();
+
+    read_in_file(in_file);
+    read_r_file(r_file);
+
+    for(int i=0;i<MAX_FRAMES;i++){
+        free_frames.push_back(i);
+
+        frame_t temp_ft;
+        temp_ft.vpage = -1; temp_ft.pid = -1; temp_ft.age=0;
+        frame_table.push_back(temp_ft);
+    }
+    inst_count = Q_ins.size();
+}
+
+int allocate_frame_from_free_list(){
+    if(free_frames.empty()) return -1;
+    int temp_front = free_frames.front(); free_frames.pop_front();
+    return temp_front;
+}
+
+int get_frame_no(){
+    int frame_no = allocate_frame_from_free_list();
+    if (frame_no == -1) frame_no = curr_pager->select_victim_frame();
+    return frame_no;
+}
+
+//TODO: zero processes
+
+void readArgTest(int argc, char *argv[]){
+    string in_file = "/Users/sakshamsingh/Desktop/lab3/mmu/in12";
+    string r_file = "/Users/sakshamsingh/Desktop/lab3/mmu/rfile";
+    file_queue.push(in_file);
+    file_queue.push(r_file);
+    MAX_FRAMES = 30;
+    curr_pager = new WSET();
+    Oflag = 1;
+    Pflag = 1;
+    Fflag = 1;
+    Sflag = 1;
+};
+
+void set_algo(char *c){
+    if(*c=='f'){curr_pager = new FIFO();}
+    else if(*c=='r'){curr_pager = new RANDOM();}
+    else if(*c=='c'){curr_pager = new CLOCK();}
+    else if(*c=='e'){curr_pager = new NRU();}
+    else if(*c=='a'){curr_pager = new AGING();}
+    else{curr_pager = new WSET();}
+}
+
+void set_options(string s){
+    for(int i=0;i<s.size();i++){
+        if(s[i]=='O'){Oflag=1;}
+        else if(s[i]=='P'){Pflag=1;}
+        else if(s[i]=='F'){Fflag=1;}
+        else if(s[i]=='S'){Sflag=1;}
+    }
+}
+
+void readArg(int argc, char *argv[]){
+    int c, index;
+    char *p;
+
+    while ((c = getopt (argc, argv, "f:a:o:")) != -1)
+        switch (c)
+        {
+            case 'f':
+                 MAX_FRAMES = strtol(optarg, &p, 10);
+                break;
+            case 'a':
+                set_algo(optarg);
+                break;
+            case 'o':
+                if(optarg!=NULL){
+                    set_options(optarg);
+                }
+                break;
+            case '?':
+                break;
+            default:
+                break;
+        }
+
+    for (index = optind; index < argc; index++)
+        file_queue.push(argv[index]);
+
+    //printf("O:%u, P:%u F:%u S:%u",Oflag, Pflag,Fflag,Sflag);
+
+}
+
 void tester(){
     for(Process *it : proc_pool)
     {
@@ -411,15 +480,14 @@ void print_FT(){
     cout<<ft_str<<endl;
 }
 
-
 void scheduler(){
-    frame_t (*temp_ft)[MAX_FRAMES] = &frame_table;
-    int temp_inst_no = 0;
+//    frame_t (*temp_ft)[MAX_FRAMES] = &frame_table;
+//    int temp_inst_no = 0;
 
     Process *curr_proc = nullptr;
     while (!Q_ins.empty()) {
         inst_no++;
-        temp_inst_no = inst_no;
+//        temp_inst_no = inst_no;
         Inst curr_inst = Q_ins.front(); Q_ins.pop();
 
         //intialise if not yet
@@ -443,7 +511,10 @@ void scheduler(){
             curr_proc->page_table[curr_inst.vpage].initialized=1;
         }
 
-        printf("%d: ==> %s %d\n",inst_no,inst_print[curr_inst.operation],curr_inst.vpage);
+        if(Oflag==1){
+            printf("%d: ==> %s %d\n",inst_no,inst_print[curr_inst.operation],curr_inst.vpage);
+        }
+
         switch (curr_inst.operation) {
             case C:{
                 curr_proc = proc_pool[curr_inst.vpage];
@@ -455,11 +526,14 @@ void scheduler(){
                 int indx = 0;
                 for(pte_t pt_it : curr_proc->page_table){
                     if(pt_it.present){
-                        printf(" %s %d:%d\n",UNMAP.c_str(),curr_proc->pid,indx);
+                        if(Oflag==1)
+                            printf(" %s %d:%d\n",UNMAP.c_str(),curr_proc->pid,indx);
+
                         curr_proc->p_stats["unmaps"]++;
                         curr_proc->page_table[indx].present=0;
                         if (pt_it.modified && pt_it.file_mapped){
-                            print_h(FOUT);
+                            if(Oflag==1)
+                                print_h(FOUT);
                             curr_proc->p_stats["fouts"]++;
                         }
                         free_frames.push_back(pt_it.page_frame_no);
@@ -478,7 +552,8 @@ void scheduler(){
                 if(!curr_pte->present){
                  //check for page fault
                  if(curr_pte->valid==0){
-                     print_h(SEGV);
+                     if(Oflag==1)
+                        print_h(SEGV);
                      curr_proc->p_stats["segv"]++;
                      break;
                  }
@@ -487,19 +562,23 @@ void scheduler(){
                  int curr_frame_no = get_frame_no();
                  frame_t *curr_frame = &frame_table[curr_frame_no];
                  if(curr_frame->pid>=0){
-                     printf(" %s %u:%u\n",UNMAP.c_str(),curr_frame->pid,curr_frame->vpage);
+                     if(Oflag==1)
+                        printf(" %s %u:%u\n",UNMAP.c_str(),curr_frame->pid,curr_frame->vpage);
 
                      Process *out_proc = proc_pool[curr_frame->pid];
                      out_proc->p_stats["unmaps"]++;
                      if(out_proc->page_table[curr_frame->vpage].modified>0){
                          if(out_proc->page_table[curr_frame->vpage].file_mapped>0){
-                             print_h(FOUT);
+                             if(Oflag==1)
+                                print_h(FOUT);
                              out_proc->p_stats["fouts"]++;
                          }else{
-                             print_h(OUT);
+                             if(Oflag==1)
+                                print_h(OUT);
                              out_proc->p_stats["outs"]++;
+                             out_proc->page_table[curr_frame->vpage].paged_out=1;
                          }
-                         out_proc->page_table[curr_frame->vpage].paged_out=1;
+
                          out_proc->page_table[curr_frame->vpage].modified=0;
                      }
 
@@ -508,25 +587,30 @@ void scheduler(){
 
                  if(curr_pte->paged_out==1){
                      if(curr_pte->file_mapped==1){
-                         print_h(FIN);
+                         if(Oflag==1)
+                            print_h(FIN);
                          curr_proc->p_stats["fins"]++;
                      }
                      else{
-                         print_h(IN);
+                         if(Oflag==1)
+                            print_h(IN);
                          curr_proc->p_stats["ins"]++;
                      }
                      //curr_pte->paged_out=0;
                  }
                 else if(curr_pte->file_mapped==1){
-                    print_h(FIN);
-                     curr_proc->p_stats["fins"]++;
+                     if(Oflag==1)
+                        print_h(FIN);
+                    curr_proc->p_stats["fins"]++;
                 }
                 else {
-                    print_h(ZERO);
+                     if(Oflag==1)
+                        print_h(ZERO);
                     curr_proc->p_stats["zeros"]++;
                 }
 
-                printf(" %s %u\n",MAP.c_str(),curr_frame_no);
+                if(Oflag==1)
+                    printf(" %s %u\n",MAP.c_str(),curr_frame_no);
                 curr_proc->p_stats["maps"]++;
 
                 curr_frame->pid = curr_proc->pid;
@@ -546,7 +630,8 @@ void scheduler(){
                 if(!curr_pte->present){
                     //check for page fault
                     if(curr_pte->valid==0){
-                        print_h(SEGV);
+                        if(Oflag==1)
+                            print_h(SEGV);
                         curr_proc->p_stats["segv"]++;
                         break;
                     }
@@ -555,20 +640,24 @@ void scheduler(){
                     int curr_frame_no = get_frame_no();
                     frame_t *curr_frame = &frame_table[curr_frame_no];
                     if(curr_frame->pid>=0){
-                        printf(" %s %u:%u\n",UNMAP.c_str(),curr_frame->pid,curr_frame->vpage);
+                        if(Oflag==1)
+                            printf(" %s %u:%u\n",UNMAP.c_str(),curr_frame->pid,curr_frame->vpage);
 
                         Process *out_proc = proc_pool[curr_frame->pid];
                         out_proc->p_stats["unmaps"]++;
                         if(out_proc->page_table[curr_frame->vpage].modified>0){
                             if(out_proc->page_table[curr_frame->vpage].file_mapped>0){
-                                print_h(FOUT);
+                                if(Oflag==1)
+                                    print_h(FOUT);
                                 out_proc->p_stats["fouts"]++;
                             }else{
-                                print_h(OUT);
+                                if(Oflag==1)
+                                    print_h(OUT);
                                 out_proc->p_stats["outs"]++;
+                                out_proc->page_table[curr_frame->vpage].paged_out=1;
                             }
                             out_proc->page_table[curr_frame->vpage].modified=0;
-                            out_proc->page_table[curr_frame->vpage].paged_out=1;
+
                         }
 
                         out_proc->page_table[curr_frame->vpage].present=0;
@@ -576,25 +665,29 @@ void scheduler(){
 
                     if(curr_pte->paged_out==1){
                         if(curr_pte->file_mapped==1){
-                            print_h(FIN);
+                            if(Oflag==1)
+                                print_h(FIN);
                             curr_proc->p_stats["fins"]++;
                         }
                         else{
-                            print_h(IN);
+                            if(Oflag==1)
+                                print_h(IN);
                             curr_proc->p_stats["ins"]++;
                         }
                         //curr_pte->paged_out=0;
                     }
                     else if(curr_pte->file_mapped==1){
-                        print_h(FIN);
+                        if(Oflag==1)
+                            print_h(FIN);
                         curr_proc->p_stats["fins"]++;
                     }
                     else {
-                        print_h(ZERO);
+                        if(Oflag==1)
+                            print_h(ZERO);
                         curr_proc->p_stats["zeros"]++;
                     }
-
-                    printf(" %s %u\n",MAP.c_str(),curr_frame_no);
+                    if(Oflag==1)
+                        printf(" %s %u\n",MAP.c_str(),curr_frame_no);
                     curr_proc->p_stats["maps"]++;
 
                     curr_frame->pid = curr_proc->pid;
@@ -609,7 +702,8 @@ void scheduler(){
                 curr_pte->referenced=1;
 
                 if(curr_pte->write_protect==1){
-                    print_h(SEGPROT);
+                    if(Oflag==1)
+                        print_h(SEGPROT);
                     curr_proc->p_stats["segprot"]++;
                 }else{
                     curr_pte->modified=1;
@@ -625,7 +719,7 @@ void scheduler(){
 
 void print_results(){
     //Proc Table
-    vector<Process*> temp_pp = proc_pool;
+    //vector<Process*> temp_pp = proc_pool;
 
     for(Process* proc_it : proc_pool){
         string pt_str = "PT["+ to_string(proc_it->pid)+"]:";
@@ -653,7 +747,8 @@ void print_results(){
             }
             idx++;
         }
-        cout<<pt_str<<endl;
+        if(Pflag==1)
+            cout<<pt_str<<endl;
     }
 
     //Frame Table
@@ -667,16 +762,19 @@ void print_results(){
         }
     }
 
-    cout<<ft_str<<endl;
+    if(Fflag==1)
+        cout<<ft_str<<endl;
 
     //Process stats
     for(Process *proc_it : proc_pool){
+        if(Sflag==1){
         printf("PROC[%d]: U=%lu M=%lu I=%lu O=%lu FI=%lu FO=%lu Z=%lu SV=%lu SP=%lu\n",
                proc_it->pid,
                proc_it->p_stats["unmaps"], proc_it->p_stats["maps"], proc_it->p_stats["ins"],
                proc_it->p_stats["outs"],
                proc_it->p_stats["fins"], proc_it->p_stats["fouts"], proc_it->p_stats["zeros"],
                proc_it->p_stats["segv"], proc_it->p_stats["segprot"]);
+        }
 
         cost += proc_it->p_stats["maps"]*300;
         cost += proc_it->p_stats["unmaps"]*400;
@@ -693,21 +791,19 @@ void print_results(){
     cost += ctx_switches*130;
     cost += process_exits*1250;
 
+    if (Sflag==1){
     printf("TOTALCOST %lu %lu %lu %llu %lu\n",
            inst_count, ctx_switches, process_exits, cost, sizeof(pte_t));
+    }
 
 }
 
 int main(int argc, char *argv[]) {
-    //readArg(argc,argv);
-    readArgTest(argc,argv);
-    string in_file = "/Users/sakshamsingh/Desktop/lab3/mmu/in11";
-    string r_file = "/Users/sakshamsingh/Desktop/lab3/mmu/rfile";
-    read_in_file(in_file);
-    read_r_file(r_file);
+   readArg(argc,argv);
+//    readArgTest(argc,argv);
+
     initialise();
     scheduler();
     print_results();
-
     return 0;
 }
